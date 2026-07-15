@@ -1,0 +1,22 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Url">API URL</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Url_Placeholder">https://generativelanguage.googleapis.com</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_ApiKey">API Key</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_ApiKey_Description">API Key 획득 방법 보기</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_ApiKey_Placeholder">API Key를 입력하세요</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_ApiKey_Empty">먼저 API Key를 설정해주세요</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Model">모델</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Voice">음성</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Voice_Description">사용 가능한 음성 보기</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Text_Empty">텍스트 내용은 비어있을 수 없습니다</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Audio_Empty">API가 빈 오디오 데이터를 반환했습니다</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Parse_Error">API 응답 파싱에 실패했습니다</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Decode_Error">오디오 데이터 디코딩에 실패했습니다</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Support">지원</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Support_Description">이 플러그인은 Google Gemini TTS API를 기반으로 합니다</sys:String>
+
+</ResourceDictionary>

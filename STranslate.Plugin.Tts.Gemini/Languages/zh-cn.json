@@ -1,0 +1,4 @@
+{
+  "Name": "Gemini TTS",
+  "Description": "基于 Google Gemini API 的语音合成插件"
+}

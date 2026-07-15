@@ -1,0 +1,10 @@
+{
+  "PluginID": "1115ab3b90cead2b89e4a8dc116399b6",
+  "Name": "Gemini TTS",
+  "Description": "Google Gemini 语音合成插件，支持最新的 Speech Generation 服务",
+  "Author": "ybhgl",
+  "Version": "1.0.0",
+  "Website": "https://github.com/ybhgl/STranslate.Plugin.Tts.Gemini",
+  "ExecuteFileName": "STranslate.Plugin.Tts.Gemini.dll",
+  "IconPath": "icon.png"
+}

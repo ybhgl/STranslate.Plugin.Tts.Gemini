@@ -68,6 +68,14 @@
                 SelectedItem="{Binding SelectedVoice}" />
         </ui:SettingsCard>
 
+        <!-- 流式传输配置 -->
+        <ui:SettingsCard Description="{DynamicResource STranslate_Plugin_Tts_Gemini_IsStreaming_Description}" Header="{DynamicResource STranslate_Plugin_Tts_Gemini_IsStreaming}">
+            <ui:SettingsCard.HeaderIcon>
+                <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Stream_24_Regular}" />
+            </ui:SettingsCard.HeaderIcon>
+            <ui:ToggleSwitch IsOn="{Binding IsStreaming}" />
+        </ui:SettingsCard>
+
         <!-- 支持信息 -->
         <ui:SettingsCard Description="{DynamicResource STranslate_Plugin_Tts_Gemini_Support_Description}" Header="{DynamicResource STranslate_Plugin_Tts_Gemini_Support}">
             <ui:SettingsCard.HeaderIcon>

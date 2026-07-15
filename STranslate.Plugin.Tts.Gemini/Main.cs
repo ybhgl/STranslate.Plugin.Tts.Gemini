@@ -1,7 +1,11 @@
 using STranslate.Plugin.Tts.Gemini.View;
 using STranslate.Plugin.Tts.Gemini.ViewModel;
+using System.IO;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Windows.Controls;
+using NAudio.Wave;
 
 namespace STranslate.Plugin.Tts.Gemini;
 
@@ -10,7 +14,7 @@ namespace STranslate.Plugin.Tts.Gemini;
 /// </summary>
 /// <remarks>
 /// 实现 <see cref="ITtsPlugin"/> 接口，提供文本转语音功能。
-/// 通过调用 Google Gemini API 的 generateContent 接口（开启 AUDIO modality），将文本转换为语音播放。
+/// 通过调用 Google Gemini API 的 generateContent / streamGenerateContent 接口（开启 AUDIO modality），将文本转换为语音播放。
 /// </remarks>
 public class Main : ITtsPlugin
 {
@@ -18,6 +22,9 @@ public class Main : ITtsPlugin
     private SettingsViewModel? _viewModel;
     private Settings Settings { get; set; } = null!;
     private IPluginContext Context { get; set; } = null!;
+    
+    // 用于流式请求的独立 HttpClient
+    private static readonly HttpClient _httpClient = new();
 
     /// <summary>
     /// 获取插件的设置界面
@@ -99,50 +106,153 @@ public class Main : ITtsPlugin
                 }
             };
 
-            // 配置HTTP请求头
-            var option = new Options
-            {
-                Headers = new Dictionary<string, string>
-                {
-                    ["x-goog-api-key"] = Settings.ApiKey,
-                    ["Content-Type"] = "application/json"
-                }
-            };
-
             var baseUrl = Settings.Url.TrimEnd('/');
-            var apiUrl = $"{baseUrl}/v1beta/models/{Settings.Model}:generateContent";
 
-            string response = string.Empty;
-            int maxRetries = 3;
-            int delayMs = 1000;
-
-            // 带有指数退避的网络请求重试机制
-            for (int i = 0; i < maxRetries; i++)
+            if (Settings.IsStreaming)
             {
+                await PlayStreamingAsync(baseUrl, requestBody, cancellationToken);
+            }
+            else
+            {
+                await PlayNonStreamingAsync(baseUrl, requestBody, cancellationToken);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // 忽略因取消令牌引发的异常
+        }
+        catch (Exception ex)
+        {
+            Context.Snackbar.ShowError(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 流式获取并播放 (边下边播)
+    /// </summary>
+    private async Task PlayStreamingAsync(string baseUrl, object requestBody, CancellationToken cancellationToken)
+    {
+        var apiUrl = $"{baseUrl}/v1beta/models/{Settings.Model}:streamGenerateContent?alt=sse";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+        request.Headers.Add("x-goog-api-key", Settings.ApiKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+
+        // 使用 ResponseHeadersRead 确保流式获取数据
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            ExtractAndShowError(errorBody);
+            return;
+        }
+
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        // 初始化 NAudio 播放器组件 (24000Hz, 16bit, Mono 是 Gemini TTS 的默认 PCM 格式)
+        var waveFormat = new WaveFormat(24000, 16, 1);
+        var bufferedWaveProvider = new BufferedWaveProvider(waveFormat)
+        {
+            BufferDuration = TimeSpan.FromMinutes(10), // 足够大的缓冲区以防止溢出
+            DiscardOnBufferOverflow = true
+        };
+
+        using var waveOut = new WaveOutEvent();
+        waveOut.Init(bufferedWaveProvider);
+        waveOut.Play();
+
+        // 当触发取消操作时停止播放
+        using var ctr = cancellationToken.Register(() => waveOut.Stop());
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cancellationToken);
+            if (line == null) break; // 读到流末尾
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            if (line.StartsWith("data: "))
+            {
+                var jsonStr = line.Substring(6).Trim();
+                if (jsonStr == "[DONE]") break;
+
                 try
                 {
-                    response = await Context.HttpService.PostAsync(
-                        apiUrl,
-                        requestBody,
-                        option,
-                        cancellationToken);
-                    break; // 成功则跳出重试循环
-                }
-                catch (Exception)
-                {
-                    if (i == maxRetries - 1) throw; // 最后一次失败则向上抛出
+                    using var doc = JsonDocument.Parse(jsonStr);
+                    var root = doc.RootElement;
                     
-                    // 等待一段时间后重试
-                    await Task.Delay(delayMs, cancellationToken);
-                    delayMs *= 2; // 指数退避
+                    if (root.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0)
+                    {
+                        var content = candidates[0].GetProperty("content");
+                        if (content.TryGetProperty("parts", out var parts) && parts.GetArrayLength() > 0)
+                        {
+                            var part = parts[0];
+                            if (part.TryGetProperty("inlineData", out var inlineData) && inlineData.TryGetProperty("data", out var dataProp))
+                            {
+                                var base64Data = dataProp.GetString();
+                                if (!string.IsNullOrEmpty(base64Data))
+                                {
+                                    byte[] audioBytes = Convert.FromBase64String(base64Data);
+                                    bufferedWaveProvider.AddSamples(audioBytes, 0, audioBytes.Length);
+                                }
+                            }
+                        }
+                    }
                 }
+                catch (JsonException) { /* 忽略无法解析的分块 */ }
             }
+        }
 
-            // 解析JSON响应
+        // 网络流接收完毕后，等待缓冲区内已有的音频播放完毕
+        while (waveOut.PlaybackState == PlaybackState.Playing && bufferedWaveProvider.BufferedBytes > 0 && !cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(100, cancellationToken);
+        }
+
+        waveOut.Stop();
+    }
+
+    /// <summary>
+    /// 非流式获取并播放 (全部下载后播放)
+    /// </summary>
+    private async Task PlayNonStreamingAsync(string baseUrl, object requestBody, CancellationToken cancellationToken)
+    {
+        var apiUrl = $"{baseUrl}/v1beta/models/{Settings.Model}:generateContent";
+
+        var option = new Options
+        {
+            Headers = new Dictionary<string, string>
+            {
+                ["x-goog-api-key"] = Settings.ApiKey,
+                ["Content-Type"] = "application/json"
+            }
+        };
+
+        string response = string.Empty;
+        int maxRetries = 3;
+        int delayMs = 1000;
+
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                response = await Context.HttpService.PostAsync(apiUrl, requestBody, option, cancellationToken);
+                break;
+            }
+            catch (Exception)
+            {
+                if (i == maxRetries - 1) throw;
+                await Task.Delay(delayMs, cancellationToken);
+                delayMs *= 2;
+            }
+        }
+
+        try
+        {
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
 
-            // 处理API返回的错误
             if (root.TryGetProperty("error", out var errorElement))
             {
                 var errorMessage = errorElement.GetProperty("message").GetString() ?? "Unknown error";
@@ -150,7 +260,6 @@ public class Main : ITtsPlugin
                 return;
             }
 
-            // 提取音频数据（Base64编码）
             var audioData = root
                 .GetProperty("candidates")[0]
                 .GetProperty("content")
@@ -159,17 +268,14 @@ public class Main : ITtsPlugin
                 .GetProperty("data")
                 .GetString();
 
-            // 验证音频数据是否为空
             if (string.IsNullOrEmpty(audioData))
             {
                 Context.Snackbar.ShowWarning(Context.GetTranslation("STranslate_Plugin_Tts_Gemini_Audio_Empty"));
                 return;
             }
 
-            // 解码Base64
             var audioBytes = Convert.FromBase64String(audioData);
 
-            // 尝试获取 mimeType
             string mimeType = "unknown";
             try
             {
@@ -181,116 +287,71 @@ public class Main : ITtsPlugin
             }
             catch { }
 
-            // 如果是 raw PCM 数据，将其包装为 WAV 格式
-            if (mimeType.Contains("audio/pcm") || mimeType.Contains("audio/l16") || (!mimeType.Contains("wav") && !mimeType.Contains("mp3") && !mimeType.Contains("ogg") && !mimeType.Contains("flac")))
+            // 处理纯 PCM 流
+            if (mimeType.Contains("audio/pcm") || mimeType.Contains("audio/l16") || 
+               (!mimeType.Contains("wav") && !mimeType.Contains("mp3") && !mimeType.Contains("ogg") && !mimeType.Contains("flac")))
             {
-                // 默认 Gemini 返回 24000Hz, 16bit, 单声道 PCM
                 int sampleRate = 24000;
-                
-                // 尝试从 mimeType 中提取采样率，例如 "audio/l16; rate=24000"
                 var rateMatch = System.Text.RegularExpressions.Regex.Match(mimeType, @"rate=(\d+)");
                 if (rateMatch.Success && int.TryParse(rateMatch.Groups[1].Value, out int parsedRate))
                 {
                     sampleRate = parsedRate;
                 }
 
-                audioBytes = AddWavHeader(audioBytes, sampleRate, 1, 16);
-                
-                // STranslate 内置的 AudioPlayer 目前仅支持 MP3 格式。
-                // 针对 WAV/PCM 数据，我们绕过 Context.AudioPlayer，直接使用 Windows 内置的 SoundPlayer 进行异步播放。
-                await Task.Run(() =>
+                await Task.Run(async () =>
                 {
-                    using var ms = new System.IO.MemoryStream(audioBytes);
-                    using var player = new System.Media.SoundPlayer(ms);
-                    // 注册取消回调，以便在用户点击停止时停止播放
-                    using var ctr = cancellationToken.Register(() => player.Stop());
-                    player.PlaySync();
+                    using var ms = new MemoryStream(audioBytes);
+                    using var rawSource = new RawSourceWaveStream(ms, new WaveFormat(sampleRate, 16, 1));
+                    using var waveOut = new WaveOutEvent();
+                    
+                    waveOut.Init(rawSource);
+                    waveOut.Play();
+
+                    using var ctr = cancellationToken.Register(() => waveOut.Stop());
+
+                    while (waveOut.PlaybackState == PlaybackState.Playing && !cancellationToken.IsCancellationRequested)
+                    {
+                        await Task.Delay(100, cancellationToken);
+                    }
                 }, cancellationToken);
             }
             else
             {
-                // 播放音频 (例如如果是 MP3 格式，则可以使用内置的播放器)
+                // 如果是标准压缩格式，交给宿主播放器
                 await Context.AudioPlayer.PlayAsync(audioBytes, cancellationToken);
             }
         }
         catch (JsonException)
         {
-            // JSON解析失败（API响应格式错误）
             Context.Snackbar.ShowError(Context.GetTranslation("STranslate_Plugin_Tts_Gemini_Parse_Error"));
         }
         catch (FormatException)
         {
-            // Base64解码失败（音频数据损坏）
             Context.Snackbar.ShowError(Context.GetTranslation("STranslate_Plugin_Tts_Gemini_Decode_Error"));
-        }
-        catch (TaskCanceledException)
-        {
-            // 忽略因取消令牌引发的异常
-        }
-        catch (Exception ex)
-        {
-            // 其他异常（如网络请求失败）
-            Context.Snackbar.ShowError(ex.Message);
         }
     }
 
     /// <summary>
-    /// 为 Raw PCM 音频数据添加 WAV 文件头
+    /// 解析并展示API返回的错误信息
     /// </summary>
-    private byte[] AddWavHeader(byte[] pcmData, int sampleRate, int channels, int bitsPerSample)
+    private void ExtractAndShowError(string errorBody)
     {
-        int headerSize = 44;
-        byte[] wavData = new byte[headerSize + pcmData.Length];
-
-        // Chunk ID: "RIFF"
-        wavData[0] = 0x52; wavData[1] = 0x49; wavData[2] = 0x46; wavData[3] = 0x46;
-        
-        // Chunk Size: pcmData.Length + 36
-        int chunkSize = pcmData.Length + 36;
-        var chunkSizeBytes = BitConverter.GetBytes(chunkSize);
-        Array.Copy(chunkSizeBytes, 0, wavData, 4, 4);
-
-        // Format: "WAVE"
-        wavData[8] = 0x57; wavData[9] = 0x41; wavData[10] = 0x56; wavData[11] = 0x45;
-        
-        // Subchunk1 ID: "fmt "
-        wavData[12] = 0x66; wavData[13] = 0x6D; wavData[14] = 0x74; wavData[15] = 0x20;
-        
-        // Subchunk1 Size: 16 (for PCM)
-        wavData[16] = 16; wavData[17] = 0; wavData[18] = 0; wavData[19] = 0;
-        
-        // Audio Format: 1 (PCM)
-        wavData[20] = 1; wavData[21] = 0;
-        
-        // Num Channels
-        wavData[22] = (byte)channels; wavData[23] = (byte)(channels >> 8);
-        
-        // Sample Rate
-        var sampleRateBytes = BitConverter.GetBytes(sampleRate);
-        Array.Copy(sampleRateBytes, 0, wavData, 24, 4);
-        
-        // Byte Rate: SampleRate * NumChannels * BitsPerSample / 8
-        int byteRate = sampleRate * channels * bitsPerSample / 8;
-        var byteRateBytes = BitConverter.GetBytes(byteRate);
-        Array.Copy(byteRateBytes, 0, wavData, 28, 4);
-        
-        // Block Align: NumChannels * BitsPerSample / 8
-        int blockAlign = channels * bitsPerSample / 8;
-        wavData[32] = (byte)blockAlign; wavData[33] = (byte)(blockAlign >> 8);
-        
-        // Bits Per Sample
-        wavData[34] = (byte)bitsPerSample; wavData[35] = (byte)(bitsPerSample >> 8);
-        
-        // Subchunk2 ID: "data"
-        wavData[36] = 0x64; wavData[37] = 0x61; wavData[38] = 0x74; wavData[39] = 0x61;
-        
-        // Subchunk2 Size: pcmData.Length
-        var subchunk2SizeBytes = BitConverter.GetBytes(pcmData.Length);
-        Array.Copy(subchunk2SizeBytes, 0, wavData, 40, 4);
-        
-        // Copy PCM Data
-        Array.Copy(pcmData, 0, wavData, 44, pcmData.Length);
-
-        return wavData;
+        try
+        {
+            using var doc = JsonDocument.Parse(errorBody);
+            if (doc.RootElement.TryGetProperty("error", out var errorElement) && 
+                errorElement.TryGetProperty("message", out var msgElement))
+            {
+                Context.Snackbar.ShowError(msgElement.GetString() ?? "Unknown API Error");
+            }
+            else
+            {
+                Context.Snackbar.ShowError("API Request Failed.");
+            }
+        }
+        catch
+        {
+            Context.Snackbar.ShowError("API Request Failed.");
+        }
     }
 }

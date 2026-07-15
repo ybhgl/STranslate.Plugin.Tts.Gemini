@@ -44,6 +44,12 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
     public partial VoiceItem? SelectedVoice { get; set; }
 
     /// <summary>
+    /// 是否启用流式传输
+    /// </summary>
+    [ObservableProperty]
+    public partial bool IsStreaming { get; set; }
+
+    /// <summary>
     /// 可选的音色列表 (Gemini 官方预置音色)
     /// </summary>
     public ObservableCollection<VoiceItem> Voices { get; } =
@@ -69,6 +75,7 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
         Url = settings.Url;
         ApiKey = settings.ApiKey;
         Model = settings.Model;
+        IsStreaming = settings.IsStreaming;
         SelectedVoice = Voices.FirstOrDefault(v => v.Value == settings.Voice) ?? Voices.FirstOrDefault(v => v.Value == "Aoede") ?? Voices[0];
 
         // 订阅属性变更，实现自动保存
@@ -93,6 +100,9 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
                 break;
             case nameof(SelectedVoice):
                 _settings.Voice = SelectedVoice?.Value ?? "Aoede";
+                break;
+            case nameof(IsStreaming):
+                _settings.IsStreaming = IsStreaming;
                 break;
         }
 

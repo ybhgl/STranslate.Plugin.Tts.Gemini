@@ -18,5 +18,7 @@
     <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Decode_Error">音频数据解码失败</sys:String>
     <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Support">支持</sys:String>
     <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Support_Description">此插件基于 Google Gemini 语音合成 API</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_IsStreaming">流式传输</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_IsStreaming_Description">仅在支持流式传输的模型上生效</sys:String>
 
 </ResourceDictionary>

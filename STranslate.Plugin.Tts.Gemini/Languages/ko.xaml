@@ -18,5 +18,7 @@
     <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Decode_Error">오디오 데이터 디코딩에 실패했습니다</sys:String>
     <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Support">지원</sys:String>
     <sys:String x:Key="STranslate_Plugin_Tts_Gemini_Support_Description">이 플러그인은 Google Gemini TTS API를 기반으로 합니다</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_IsStreaming">Streaming</sys:String>
+    <sys:String x:Key="STranslate_Plugin_Tts_Gemini_IsStreaming_Description">지원되는 모델에서만 작동합니다</sys:String>
 
 </ResourceDictionary>

@@ -49,4 +49,12 @@ public class Settings
     /// </list>
     /// </value>
     public string Voice { get; set; } = "Aoede";
+
+    /// <summary>
+    /// 是否启用流式传输
+    /// </summary>
+    /// <value>
+    /// 开启后使用 Server-Sent Events (SSE) 边下载边播放，大幅降低首字节延迟。
+    /// </value>
+    public bool IsStreaming { get; set; } = false;
 }

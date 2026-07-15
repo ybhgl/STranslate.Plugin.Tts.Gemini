@@ -53,6 +53,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <PackageReference Include="NAudio" Version="2.3.0" />
         <PackageReference Include="STranslate.Plugin" Version="1.0.13" />
     </ItemGroup>
 
